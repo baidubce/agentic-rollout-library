@@ -5,7 +5,7 @@ import re
 import time
 from urllib.parse import unquote
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import ToolResult, create_openai_tool_schema
 
 try:
@@ -16,7 +16,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class K8sFileWriteTool(AgenticBaseTool):
+class K8sFileWriteTool(CCToolBase):
     """
     Tool to write a file to the filesystem in a Kubernetes pod.
     Inspired by a TypeScript FileWriteTool and architected like K8sFileEditorTool.

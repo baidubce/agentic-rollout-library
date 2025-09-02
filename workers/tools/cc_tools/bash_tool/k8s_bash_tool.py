@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover
     KubernetesManager = None
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import (
     OpenAIFunctionToolSchema,
     ToolResult,
@@ -47,7 +47,7 @@ def _coerce_rc(rc: Any) -> int:
         return -1
 
 
-class K8sBashTool(AgenticBaseTool):
+class K8sBashTool(CCToolBase):
     DEFAULT_BANNED_COMMANDS = [
         "git",
         "ipython",
@@ -91,7 +91,7 @@ class K8sBashTool(AgenticBaseTool):
         self._instances: Dict[str, Dict[str, Any]] = {}
         self._k8s_manager: Optional[KubernetesManager] = None
 
-        super().__init__(config=cfg, tool_schema=tool_schema)
+        super().__init__(cfg)
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return create_openai_tool_schema(

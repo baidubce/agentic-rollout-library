@@ -8,7 +8,7 @@ import shlex
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import (
     OpenAIFunctionToolSchema,
     ToolResult,
@@ -33,7 +33,7 @@ def _format_int(n: int) -> str:
     return f"{n:,}"
 
 
-class K8sArchitectTool(AgenticBaseTool):
+class K8sArchitectTool(CCToolBase):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         if KubernetesManager is None:
             raise ImportError("kodo is required for K8s-backed tools.")

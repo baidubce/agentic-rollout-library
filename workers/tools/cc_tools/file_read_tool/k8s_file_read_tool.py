@@ -16,7 +16,7 @@ try:
 except ImportError:
     KubernetesManager = None  # type: ignore
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import (
     OpenAIFunctionToolSchema,
     ToolResult,
@@ -40,7 +40,7 @@ class _CmdResult:
     return_code: int
 
 
-class K8sFileReadTool(AgenticBaseTool):
+class K8sFileReadTool(CCToolBase):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         if KubernetesManager is None:
             raise ImportError("kodo library is required for K8s tools. Please install it before using K8sFileReadTool.")
@@ -55,6 +55,33 @@ class K8sFileReadTool(AgenticBaseTool):
         super().__init__(config)
         self._k8s_mgr: Optional[KubernetesManager] = None
         self.execution_history: Dict[str, list] = {}
+
+    def is_read_only(self) -> bool:
+        """文件读取工具是只读的"""
+        return True
+    
+    def _get_parameters_schema(self) -> Dict[str, Any]:
+        """获取参数schema"""
+        return {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to read (e.g., /testbed/main.py)"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Line offset to start reading from (0-based)",
+                    "minimum": 0
+                },
+                "limit": {
+                    "type": "integer", 
+                    "description": "Maximum number of lines to read",
+                    "minimum": 1
+                }
+            },
+            "required": ["file_path"]
+        }
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return create_openai_tool_schema(

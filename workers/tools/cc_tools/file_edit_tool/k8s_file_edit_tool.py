@@ -2,7 +2,7 @@ import os
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from workers.core.base_tool import BaseAgenticTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import (
     OpenAIFunctionToolSchema,
     ToolResult,
@@ -10,7 +10,7 @@ from workers.core.tool_schemas import (
 )
 
 
-class K8sFileEditTool(BaseAgenticTool):
+class K8sFileEditTool(CCToolBase):
     def __init__(self, cfg: Optional[Dict[str, Any]] = None):
         cfg = cfg or {}
         self.namespace: str = cfg.get("namespace", "default")

@@ -8,7 +8,7 @@ import shlex
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import OpenAIFunctionToolSchema, ToolResult, create_openai_tool_schema
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ def _process_output(output: Dict[str, Any]) -> Dict[str, Any]:
     return {"output_type": str(ot or ""), "text": ""}
 
 
-class K8sReadNotebookTool(AgenticBaseTool):
+class K8sReadNotebookTool(CCToolBase):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         if KubernetesManager is None:
             raise ImportError("kodo is required for K8s-backed tools.")

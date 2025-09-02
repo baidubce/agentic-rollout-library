@@ -7,7 +7,7 @@ import shlex
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from workers.core.base_tool import AgenticBaseTool
+from workers.core.enhanced_base_tool import CCToolBase
 from workers.core.tool_schemas import OpenAIFunctionToolSchema, ToolResult, create_openai_tool_schema
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ except ImportError:
     KubernetesManager = None  # type: ignore[misc,assignment]
 
 
-class K8sThinkTool(AgenticBaseTool):
+class K8sThinkTool(CCToolBase):
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         if KubernetesManager is None:
             raise ImportError("kodo is required for K8s-backed tools.")
