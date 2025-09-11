@@ -28,9 +28,9 @@ dependencies = [
     # Core dependencies
     "pydantic>=2.0.0",
     "typing-extensions>=4.0.0",
-    
     # Kodo dependency for K8s control and execution
     "kodo @ git+https://github.com/baidubce/kodo.git",
+    "chardet>=5.2.0",
 ]
 
 [project.optional-dependencies]
@@ -67,3 +67,10 @@ line_length = 88
 python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+]
