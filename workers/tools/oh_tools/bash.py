@@ -2,11 +2,20 @@
 """
 Bash executor tool adapted from OpenHands for the agentic rollout framework.
 Supports command execution with timeout and interaction capabilities.
+Now supports both local execution and K8s pod execution.
 """
 
 import sys
 import logging
 from typing import Any, Dict, Optional
+
+# Optional K8s support
+try:
+    from kodo import KubernetesManager
+    K8S_AVAILABLE = True
+except ImportError:
+    KubernetesManager = None
+    K8S_AVAILABLE = False
 
 from ...core.base_tool import BaseAgenticTool
 from ...core.tool_schemas import OpenAIFunctionToolSchema, ToolResult, create_openai_tool_schema
@@ -54,18 +63,35 @@ class OHBashTool(BaseAgenticTool):
     """
     Bash executor tool adapted from OpenHands.
     Provides command execution with timeout and interaction capabilities.
+    Supports both local execution and K8s pod execution.
     """
     
     def __init__(self, config: Optional[Dict] = None):
         """Initialize the bash executor tool."""
         config = config or {}
         self.use_short_description = config.get("use_short_description", False)
+        
+        # K8s configuration
+        self.execution_mode = config.get("execution_mode", "local")
+        self.pod_name = config.get("pod_name")
+        self.namespace = config.get("namespace", "default")
+        self.kubeconfig_path = config.get("kubeconfig_path", None)
+        self.working_dir = config.get("working_dir", "/testbed")  # Default working directory
+        
+        # Validate K8s configuration if needed
+        if self.execution_mode == "k8s":
+            if not K8S_AVAILABLE:
+                raise ImportError("kodo library is required for K8s execution mode. Please install it from https://github.com/baidubce/kodo.git")
+            if not self.pod_name:
+                raise ValueError("pod_name is required when execution_mode is 'k8s'")
+        
         super().__init__(config)
         
         # Session management
         self.sessions = {}  # instance_id -> session state
         self.max_output_length = config.get("max_output_length", 10000)
         self.default_timeout = config.get("default_timeout", 10)
+        self.k8s_manager = None
     
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         """Return the OpenAI function schema for this tool."""
@@ -74,9 +100,11 @@ class OHBashTool(BaseAgenticTool):
             else _DETAILED_BASH_DESCRIPTION
         )
         
+        execution_context = f" (executing in {self.execution_mode} mode)" if self.execution_mode != "local" else ""
+        
         return create_openai_tool_schema(
             name="execute_bash",
-            description=refine_prompt(description),
+            description=refine_prompt(description) + execution_context,
             parameters={
                 "command": {
                     "type": "string",
@@ -162,63 +190,72 @@ class OHBashTool(BaseAgenticTool):
                         result=f"Sent input to process: {command}"
                     )
             
-            # Execute new command
-            try:
-                # Run command with timeout
-                process = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    stdin=asyncio.subprocess.PIPE,
-                    cwd=session.get("cwd"),
-                    env=session.get("env")
+            # Execute new command based on execution mode
+            if self.execution_mode == "k8s":
+                result = await self._run_k8s_command(command, timeout)
+                return ToolResult(
+                    success=result["return_code"] == 0,
+                    result=self._format_output(result),
+                    error=result["stderr"] if result["return_code"] != 0 else None
                 )
-                
-                # Store as running process if long-running
-                if timeout > self.default_timeout:
-                    session["running_process"] = process
-                
+            else:
+                # Local execution
                 try:
-                    stdout, stderr = await asyncio.wait_for(
-                        process.communicate(),
-                        timeout=timeout
+                    # Run command with timeout
+                    process = await asyncio.create_subprocess_shell(
+                        command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        stdin=asyncio.subprocess.PIPE,
+                        cwd=session.get("cwd"),
+                        env=session.get("env")
                     )
                     
-                    # Clear running process on completion
-                    if session.get("running_process") == process:
-                        session["running_process"] = None
+                    # Store as running process if long-running
+                    if timeout > self.default_timeout:
+                        session["running_process"] = process
                     
-                    output = stdout.decode('utf-8', errors='replace')
-                    error = stderr.decode('utf-8', errors='replace')
-                    
-                    # Truncate if needed
-                    if len(output) > self.max_output_length:
-                        output = output[:self.max_output_length] + "\n<output truncated>"
-                    
-                    result = output
-                    if error:
-                        result += f"\nSTDERR:\n{error}"
-                    
-                    return ToolResult(
-                        success=process.returncode == 0,
-                        result=result
-                    )
-                    
-                except asyncio.TimeoutError:
-                    # Soft timeout - process still running
-                    session["running_process"] = process
+                    try:
+                        stdout, stderr = await asyncio.wait_for(
+                            process.communicate(),
+                            timeout=timeout
+                        )
+                        
+                        # Clear running process on completion
+                        if session.get("running_process") == process:
+                            session["running_process"] = None
+                        
+                        output = stdout.decode('utf-8', errors='replace')
+                        error = stderr.decode('utf-8', errors='replace')
+                        
+                        # Truncate if needed
+                        if len(output) > self.max_output_length:
+                            output = output[:self.max_output_length] + "\n<output truncated>"
+                        
+                        result = output
+                        if error:
+                            result += f"\nSTDERR:\n{error}"
+                        
+                        return ToolResult(
+                            success=process.returncode == 0,
+                            result=result
+                        )
+                        
+                    except asyncio.TimeoutError:
+                        # Soft timeout - process still running
+                        session["running_process"] = process
+                        return ToolResult(
+                            success=False,
+                            result=f"Command timed out after {timeout} seconds. Process is still running. "
+                                   "Use is_input=true to interact with it or send C-c to terminate."
+                        )
+                        
+                except Exception as e:
+                    logger.error(f"Command execution failed: {e}")
                     return ToolResult(
                         success=False,
-                        result=f"Command timed out after {timeout} seconds. Process is still running. "
-                               "Use is_input=true to interact with it or send C-c to terminate."
+                        error=f"Failed to execute command: {str(e)}"
                     )
-                    
-            except Exception as e:
-                logger.error(f"Command execution failed: {e}")
-                return ToolResult(
-                    success=False,
-                    error=f"Failed to execute command: {str(e)}"
-                )
                 
         except Exception as e:
             logger.error(f"Bash tool execution failed: {e}")
@@ -226,6 +263,91 @@ class OHBashTool(BaseAgenticTool):
                 success=False,
                 error=f"Bash tool error: {str(e)}"
             )
+    
+    def _get_k8s_manager(self):
+        """Get or create K8s manager instance."""
+        if self.k8s_manager is None:
+            self.k8s_manager = KubernetesManager(
+                namespace=self.namespace,
+                kubeconfig_path=self.kubeconfig_path
+            )
+        return self.k8s_manager
+    
+    async def _run_k8s_command(self, command: str, timeout: int) -> Dict[str, Any]:
+        """Run bash command in K8s pod."""
+        try:
+            k8s_mgr = self._get_k8s_manager()
+            
+            # Prepend cd to working directory and properly handle timeout
+            # Format: cd {working_dir} && timeout {timeout} {command}
+            full_command = f"cd {self.working_dir} && timeout {timeout} {command}"
+            
+            logger.info(f"Executing command in K8s pod {self.pod_name}: {full_command}")
+            
+            # Execute command in pod using kodo API
+            output, exit_code = k8s_mgr.execute_command(self.pod_name, full_command)
+            
+            # Log raw output for debugging
+            logger.debug(f"Raw K8s output: {output}")
+            logger.debug(f"Raw K8s exit code: {exit_code}")
+            
+            # Convert exit_code to int if it's a string
+            if isinstance(exit_code, str):
+                # Handle "Error: Exit code X" format
+                if "Exit code" in exit_code:
+                    try:
+                        # Extract number from "Error: Exit code 2"
+                        exit_code_int = int(exit_code.split("Exit code")[-1].strip())
+                    except:
+                        exit_code_int = -1
+                elif exit_code.isdigit():
+                    exit_code_int = int(exit_code)
+                else:
+                    exit_code_int = -1
+            else:
+                exit_code_int = exit_code
+            
+            # Check if output contains error information
+            stderr_output = ""
+            if exit_code_int != 0 and output:
+                # Sometimes errors are mixed in stdout when using kubectl exec
+                stderr_output = output if "error" in output.lower() or "exception" in output.lower() else ""
+            
+            return {
+                "stdout": output,
+                "stderr": stderr_output,
+                "return_code": exit_code_int
+            }
+            
+        except Exception as e:
+            logger.error(f"K8s command execution failed for pod {self.pod_name}: {e}", exc_info=True)
+            error_details = f"K8s execution error: {str(e)}\nPod: {self.pod_name}\nNamespace: {self.namespace}\nCommand: {command}"
+            return {
+                "stdout": "",
+                "stderr": error_details,
+                "return_code": -1
+            }
+    
+    def _format_output(self, result: Dict[str, Any]) -> str:
+        """Format output similar to R2E style."""
+        output_parts = []
+        
+        if result["stdout"]:
+            output_parts.append("[STDOUT]")
+            stdout = result["stdout"].strip()
+            if len(stdout) > self.max_output_length:
+                stdout = stdout[:self.max_output_length] + "\n<output truncated>"
+            output_parts.append(stdout)
+            output_parts.append("")
+        
+        if result["stderr"]:
+            output_parts.append("[STDERR]")
+            stderr = result["stderr"].strip()
+            if len(stderr) > self.max_output_length:
+                stderr = stderr[:self.max_output_length] + "\n<output truncated>"
+            output_parts.append(stderr)
+        
+        return "\n".join(output_parts)
     
     async def calculate_reward(self, instance_id: str, **kwargs) -> float:
         """
@@ -243,6 +365,25 @@ class OHBashTool(BaseAgenticTool):
         if last_result and last_result.get("success"):
             return 1.0
         return 0.0
+    
+    def get_execution_info(self) -> Dict[str, Any]:
+        """Get information about the execution environment."""
+        info = {
+            "execution_mode": self.execution_mode,
+            "timeout": self.default_timeout,
+            "max_output_length": self.max_output_length,
+            "tool_style": "OpenHands"
+        }
+        
+        if self.execution_mode == "k8s":
+            info.update({
+                "pod_name": self.pod_name,
+                "namespace": self.namespace,
+                "kubeconfig_path": self.kubeconfig_path or "default",
+                "working_dir": self.working_dir
+            })
+        
+        return info
 
 
 __all__ = ['OHBashTool']

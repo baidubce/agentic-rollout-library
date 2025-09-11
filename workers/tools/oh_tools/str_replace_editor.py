@@ -2,12 +2,22 @@
 """
 String replace editor tool adapted from OpenHands for the agentic rollout framework.
 Provides file viewing, creation, and editing capabilities.
+Now supports both local execution and K8s pod execution.
 """
 
 import os
 import logging
+import base64
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Optional K8s support
+try:
+    from kodo import KubernetesManager
+    K8S_AVAILABLE = True
+except ImportError:
+    KubernetesManager = None
+    K8S_AVAILABLE = False
 
 from ...core.base_tool import BaseAgenticTool
 from ...core.tool_schemas import OpenAIFunctionToolSchema, ToolResult, create_openai_tool_schema
@@ -76,12 +86,28 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
     """
     String replace editor tool adapted from OpenHands.
     Provides file viewing, creation, and editing capabilities.
+    Supports both local execution and K8s pod execution.
     """
     
     def __init__(self, config: Optional[Dict] = None):
         """Initialize the string replace editor tool."""
         config = config or {}
         self.use_short_description = config.get("use_short_description", False)
+        
+        # K8s configuration
+        self.execution_mode = config.get("execution_mode", "local")
+        self.pod_name = config.get("pod_name")
+        self.namespace = config.get("namespace", "default")
+        self.kubeconfig_path = config.get("kubeconfig_path", None)
+        self.working_dir = config.get("working_dir", "/testbed")  # Default working directory
+        
+        # Validate K8s configuration if needed
+        if self.execution_mode == "k8s":
+            if not K8S_AVAILABLE:
+                raise ImportError("kodo library is required for K8s execution mode. Please install it from https://github.com/baidubce/kodo.git")
+            if not self.pod_name:
+                raise ValueError("pod_name is required when execution_mode is 'k8s'")
+        
         super().__init__(config)
         
         # File operation settings
@@ -90,6 +116,7 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
         
         # Track file history for undo capability
         self.file_history = {}  # instance_id -> {file_path -> [history]}
+        self.k8s_manager = None
     
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         """Return the OpenAI function schema for this tool."""
@@ -98,9 +125,11 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
             else _DETAILED_STR_REPLACE_EDITOR_DESCRIPTION
         )
         
+        execution_context = f" (executing in {self.execution_mode} mode)" if self.execution_mode != "local" else ""
+        
         return create_openai_tool_schema(
             name="str_replace_editor",
-            description=description,
+            description=description + execution_context,
             parameters={
                 'command': {
                     'description': 'The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`.',
@@ -212,10 +241,107 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
                 error=f"Editor tool error: {str(e)}"
             )
     
+    def _get_k8s_manager(self):
+        """Get or create K8s manager instance."""
+        if self.k8s_manager is None:
+            self.k8s_manager = KubernetesManager(
+                namespace=self.namespace,
+                kubeconfig_path=self.kubeconfig_path
+            )
+        return self.k8s_manager
+    
+    async def _k8s_file_exists(self, path: str) -> bool:
+        """Check if file exists in K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        cmd = f"test -e {path} && echo 'EXISTS' || echo 'NOT_EXISTS'"
+        output, _ = k8s_mgr.execute_command(self.pod_name, cmd)
+        return "EXISTS" in output
+    
+    async def _k8s_is_directory(self, path: str) -> bool:
+        """Check if path is a directory in K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        cmd = f"test -d {path} && echo 'IS_DIR' || echo 'NOT_DIR'"
+        output, _ = k8s_mgr.execute_command(self.pod_name, cmd)
+        return "IS_DIR" in output
+    
+    async def _k8s_read_file(self, path: str) -> str:
+        """Read file content from K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        # Use base64 to handle special characters properly
+        cmd = f"base64 {path}"
+        output, exit_code = k8s_mgr.execute_command(self.pod_name, cmd)
+        
+        if isinstance(exit_code, str) and "Exit code" in exit_code:
+            # Handle error
+            raise Exception(f"Failed to read file: {exit_code}")
+        
+        # Decode base64
+        content = base64.b64decode(output.strip()).decode('utf-8')
+        return content
+    
+    async def _k8s_write_file(self, path: str, content: str) -> None:
+        """Write file content to K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        # Use base64 to handle special characters properly
+        encoded_content = base64.b64encode(content.encode('utf-8')).decode('ascii')
+        cmd = f"echo '{encoded_content}' | base64 -d > {path}"
+        output, exit_code = k8s_mgr.execute_command(self.pod_name, cmd)
+        
+        if isinstance(exit_code, str) and "Exit code" in exit_code:
+            raise Exception(f"Failed to write file: {exit_code}")
+    
+    async def _k8s_delete_file(self, path: str) -> None:
+        """Delete file in K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        cmd = f"rm -f {path}"
+        output, exit_code = k8s_mgr.execute_command(self.pod_name, cmd)
+        
+        if isinstance(exit_code, str) and "Exit code" in exit_code:
+            raise Exception(f"Failed to delete file: {exit_code}")
+    
     async def _view_file(self, path: str, view_range: Optional[List[int]] = None) -> ToolResult:
         """View a file or directory."""
         try:
-            path_obj = Path(path)
+            if self.execution_mode == "k8s":
+                # K8s execution
+                if not await self._k8s_file_exists(path):
+                    return ToolResult(
+                        success=False,
+                        error=f"Path does not exist: {path}"
+                    )
+                
+                if await self._k8s_is_directory(path):
+                    return await self._view_directory_k8s(path)
+                
+                # Read file content from K8s
+                content = await self._k8s_read_file(path)
+                lines = content.splitlines(keepends=True)
+                
+                # Apply view range if specified
+                if view_range:
+                    start = view_range[0] - 1 if view_range[0] > 0 else 0
+                    end = view_range[1] if len(view_range) > 1 and view_range[1] != -1 else len(lines)
+                    lines = lines[start:end]
+                    line_offset = start
+                else:
+                    line_offset = 0
+                
+                # Format with line numbers
+                result = ""
+                for i, line in enumerate(lines, start=line_offset + 1):
+                    result += f"{i:6d}→{line}"
+                
+                # Truncate if needed
+                if len(result) > self.max_output_length:
+                    result = result[:self.max_output_length] + "\n<response clipped>"
+                
+                return ToolResult(
+                    success=True,
+                    result=result
+                )
+            else:
+                # Local execution (original code)
+                path_obj = Path(path)
             
             # Check if path exists
             if not path_obj.exists():
@@ -280,6 +406,52 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
                 error=f"Error viewing {path}: {str(e)}"
             )
     
+    async def _view_directory_k8s(self, path: str) -> ToolResult:
+        """View directory contents in K8s pod."""
+        k8s_mgr = self._get_k8s_manager()
+        cmd = f"find {path} -maxdepth 2 -type f -o -type d | sort"
+        output, exit_code = k8s_mgr.execute_command(self.pod_name, cmd)
+        
+        if isinstance(exit_code, str) and "Exit code" in exit_code:
+            return ToolResult(
+                success=False,
+                error=f"Failed to list directory: {exit_code}"
+            )
+        
+        # Format output
+        lines = output.strip().split('\n')
+        result = []
+        base_path = path.rstrip('/')
+        
+        for line in lines:
+            if not line:
+                continue
+            # Calculate indent based on depth
+            rel_path = line[len(base_path):].lstrip('/')
+            depth = rel_path.count('/')
+            indent = '  ' * depth
+            name = os.path.basename(line)
+            
+            # Check if it's a directory
+            is_dir_cmd = f"test -d {line} && echo 'DIR'"
+            is_dir_output, _ = k8s_mgr.execute_command(self.pod_name, is_dir_cmd)
+            
+            if "DIR" in is_dir_output:
+                result.append(f"{indent}{name}/")
+            else:
+                result.append(f"{indent}{name}")
+        
+        output = '\n'.join(result)
+        
+        # Truncate if needed
+        if len(output) > self.max_output_length:
+            output = output[:self.max_output_length] + "\n<response clipped>"
+        
+        return ToolResult(
+            success=True,
+            result=output
+        )
+    
     async def _view_directory(self, path_obj: Path) -> ToolResult:
         """View directory contents up to 2 levels deep."""
         try:
@@ -324,7 +496,49 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
     async def _create_file(self, instance_id: str, path: str, file_text: str) -> ToolResult:
         """Create a new file."""
         try:
-            path_obj = Path(path)
+            if self.execution_mode == "k8s":
+                # K8s execution
+                if await self._k8s_file_exists(path):
+                    return ToolResult(
+                        success=False,
+                        error=f"File already exists: {path}"
+                    )
+                
+                # Check parent directory
+                parent_dir = os.path.dirname(path)
+                if not await self._k8s_file_exists(parent_dir):
+                    return ToolResult(
+                        success=False,
+                        error=f"Parent directory does not exist: {parent_dir}. "
+                              "Please create it first using `mkdir -p`"
+                    )
+                
+                # Write file
+                await self._k8s_write_file(path, file_text)
+                
+                # Store in history
+                if path not in self.file_history.get(instance_id, {}):
+                    if instance_id not in self.file_history:
+                        self.file_history[instance_id] = {}
+                    self.file_history[instance_id][path] = []
+                self.file_history[instance_id][path].append(("create", None, file_text))
+                
+                # Show created file with line numbers
+                lines = file_text.splitlines()
+                result = f"File created at {path}\n"
+                for i, line in enumerate(lines[:20], start=1):  # Show first 20 lines
+                    result += f"{i:6d}→{line}\n"
+                
+                if len(lines) > 20:
+                    result += f"... ({len(lines) - 20} more lines)"
+                
+                return ToolResult(
+                    success=True,
+                    result=result
+                )
+            else:
+                # Local execution (original code)
+                path_obj = Path(path)
             
             # Check if file already exists
             if path_obj.exists():
@@ -373,7 +587,75 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
     async def _str_replace(self, instance_id: str, path: str, old_str: str, new_str: str) -> ToolResult:
         """Replace string in file."""
         try:
-            path_obj = Path(path)
+            if self.execution_mode == "k8s":
+                # K8s execution
+                if not await self._k8s_file_exists(path):
+                    return ToolResult(
+                        success=False,
+                        error=f"File does not exist: {path}"
+                    )
+                
+                # Read file content
+                content = await self._k8s_read_file(path)
+                
+                # Check if old_str exists in file
+                if old_str not in content:
+                    return ToolResult(
+                        success=False,
+                        error=f"String not found in file: {old_str[:100]}..."
+                    )
+                
+                # Check if old_str is unique
+                if content.count(old_str) > 1:
+                    return ToolResult(
+                        success=False,
+                        error=f"String appears {content.count(old_str)} times in file. "
+                              "Please provide more context to make it unique."
+                    )
+                
+                # Store original content in history
+                if instance_id not in self.file_history:
+                    self.file_history[instance_id] = {}
+                if path not in self.file_history[instance_id]:
+                    self.file_history[instance_id][path] = []
+                self.file_history[instance_id][path].append(("str_replace", content, None))
+                
+                # Perform replacement
+                new_content = content.replace(old_str, new_str)
+                
+                # Write back to file
+                await self._k8s_write_file(path, new_content)
+                
+                # Show the change with context
+                lines = new_content.splitlines()
+                
+                # Find the line where change occurred
+                old_lines = content.splitlines()
+                change_line = -1
+                for i, (old_line, new_line) in enumerate(zip(old_lines, lines)):
+                    if old_line != new_line:
+                        change_line = i
+                        break
+                
+                if change_line == -1 and len(lines) != len(old_lines):
+                    change_line = min(len(lines), len(old_lines)) - 1
+                
+                # Show context around change
+                start = max(0, change_line - 2)
+                end = min(len(lines), change_line + 3)
+                
+                result = f"String replaced in {path}\n"
+                for i in range(start, end):
+                    if i < len(lines):
+                        result += f"{i+1:6d}→{lines[i]}\n"
+                
+                return ToolResult(
+                    success=True,
+                    result=result
+                )
+            else:
+                # Local execution (original code)
+                path_obj = Path(path)
             
             # Check if file exists
             if not path_obj.exists():
@@ -450,7 +732,57 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
     async def _insert_line(self, instance_id: str, path: str, insert_line: int, new_str: str) -> ToolResult:
         """Insert text after a specific line."""
         try:
-            path_obj = Path(path)
+            if self.execution_mode == "k8s":
+                # K8s execution
+                if not await self._k8s_file_exists(path):
+                    return ToolResult(
+                        success=False,
+                        error=f"File does not exist: {path}"
+                    )
+                
+                # Read file content
+                content = await self._k8s_read_file(path)
+                lines = content.splitlines(keepends=True)
+                
+                # Validate insert_line
+                if insert_line < 0 or insert_line > len(lines):
+                    return ToolResult(
+                        success=False,
+                        error=f"Invalid insert_line: {insert_line}. File has {len(lines)} lines."
+                    )
+                
+                # Store original content in history
+                if instance_id not in self.file_history:
+                    self.file_history[instance_id] = {}
+                if path not in self.file_history[instance_id]:
+                    self.file_history[instance_id][path] = []
+                self.file_history[instance_id][path].append(("insert", content, None))
+                
+                # Insert new text
+                if not new_str.endswith('\n'):
+                    new_str += '\n'
+                
+                lines.insert(insert_line, new_str)
+                
+                # Write back to file
+                new_content = ''.join(lines)
+                await self._k8s_write_file(path, new_content)
+                
+                # Show context around insertion
+                start = max(0, insert_line - 2)
+                end = min(len(lines), insert_line + 3)
+                
+                result = f"Text inserted in {path} after line {insert_line}\n"
+                for i in range(start, end):
+                    result += f"{i+1:6d}→{lines[i]}"
+                
+                return ToolResult(
+                    success=True,
+                    result=result
+                )
+            else:
+                # Local execution (original code)
+                path_obj = Path(path)
             
             # Check if file exists
             if not path_obj.exists():
@@ -525,23 +857,42 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
             last_edit = history.pop()
             operation, old_content, _ = last_edit
             
-            if operation == "create":
-                # Delete the file
-                if Path(path).exists():
-                    os.remove(path)
-                return ToolResult(
-                    success=True,
-                    result=f"File creation undone, file deleted: {path}"
-                )
+            if self.execution_mode == "k8s":
+                # K8s execution
+                if operation == "create":
+                    # Delete the file
+                    if await self._k8s_file_exists(path):
+                        await self._k8s_delete_file(path)
+                    return ToolResult(
+                        success=True,
+                        result=f"File creation undone, file deleted: {path}"
+                    )
+                else:
+                    # Restore old content
+                    await self._k8s_write_file(path, old_content)
+                    return ToolResult(
+                        success=True,
+                        result=f"Last edit undone for {path}"
+                    )
             else:
-                # Restore old content
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(old_content)
-                
-                return ToolResult(
-                    success=True,
-                    result=f"Last edit undone for {path}"
-                )
+                # Local execution (original code)
+                if operation == "create":
+                    # Delete the file
+                    if Path(path).exists():
+                        os.remove(path)
+                    return ToolResult(
+                        success=True,
+                        result=f"File creation undone, file deleted: {path}"
+                    )
+                else:
+                    # Restore old content
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write(old_content)
+                    
+                    return ToolResult(
+                        success=True,
+                        result=f"Last edit undone for {path}"
+                    )
                 
         except Exception as e:
             return ToolResult(
@@ -565,6 +916,25 @@ class OHStrReplaceEditorTool(BaseAgenticTool):
         if last_result and last_result.get("success"):
             return 1.0
         return 0.0
+    
+    def get_execution_info(self) -> Dict[str, Any]:
+        """Get information about the execution environment."""
+        info = {
+            "execution_mode": self.execution_mode,
+            "max_output_length": self.max_output_length,
+            "max_file_size": self.max_file_size,
+            "tool_style": "OpenHands"
+        }
+        
+        if self.execution_mode == "k8s":
+            info.update({
+                "pod_name": self.pod_name,
+                "namespace": self.namespace,
+                "kubeconfig_path": self.kubeconfig_path or "default",
+                "working_dir": self.working_dir
+            })
+        
+        return info
 
 
 __all__ = ['OHStrReplaceEditorTool']
