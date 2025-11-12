@@ -203,19 +203,40 @@ class SweAgent(GeneralAgent):
             "token_counts": []  # List of token counts after each interaction
         }
         
-        # Add initial observation
-        initial_content = prompt
-        initial_step = TrajectoryStep(
-            step_type=StepType.OBSERVATION,
-            content=initial_content,  # No "Task:" prefix
-            metadata={"prompt": prompt}
-        )
-        trajectory.add_step(initial_step)
-        trajectory.metadata["message_lengths"].append({
-            "role": "user",
-            "length": len(initial_content),
-            "step_type": "observation"
-        })
+        if isinstance(prompt, str):
+            # Add initial observation
+            initial_content = prompt
+            initial_step = TrajectoryStep(
+                step_type=StepType.OBSERVATION,
+                content=initial_content,  # No "Task:" prefix
+                metadata={"prompt": prompt}
+            )
+            trajectory.add_step(initial_step)
+            trajectory.metadata["message_lengths"].append({
+                "role": "user",
+                "length": len(initial_content),
+                "step_type": "observation"
+            })
+        elif isinstance(prompt, list):
+            if prompt[0]["role"] == "system":
+                self.custom_system_prompt = prompt[0]["content"]
+                prompt = prompt[1: ]
+            for message in prompt:
+                # Add initial observation
+                initial_content = message["content"]
+                initial_step = TrajectoryStep(
+                    step_type=StepType.OBSERVATION,
+                    content=initial_content,  # No "Task:" prefix
+                    metadata={"prompt": initial_content}
+                )
+                trajectory.add_step(initial_step)
+                trajectory.metadata["message_lengths"].append({
+                    "role": message["role"],
+                    "length": len(initial_content),
+                    "step_type": "observation"
+                })
+        else:
+            raise Exception("Agent Rollout Error: please use str or list format with prompt.")
         
         consecutive_thoughts = 0
         round_count = 0
