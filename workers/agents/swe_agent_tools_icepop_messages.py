@@ -91,7 +91,6 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
 
         self.trajectory = None
         self.inference_log_probs_list = []
-        self.llm_all_tokens = []
         
         logger.info(f"Initialized GeneralAgent with working_dir={working_dir}, kubeconfig_path={kubeconfig_path}, max_rounds={self.max_rounds}")
     
@@ -272,7 +271,6 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
         consecutive_thoughts = 0
         round_count = 0
         inference_log_probs_list = []
-        llm_all_tokens = []
 
         run_start_time = time.time()
         exist_tokens = 0
@@ -284,7 +282,6 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
             try:
                 self.trajectory = trajectory
                 self.inference_log_probs_list = inference_log_probs_list
-                self.llm_all_tokens = llm_all_tokens
                 
                 # Generate next step
                 messages = self.format_messages_for_llm(trajectory)
@@ -335,7 +332,6 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
                     response = result
                     
                 inference_log_probs_list.append(step_inf_log_probs)
-                llm_all_tokens.append(llm_tokens)
                 # Record timing
                 generation_time = time.time() - start_time
                 print(f"LLM call round {round_count + 1} execution time: {generation_time:.3f} seconds, pod name: {request_id}, idx is {idx}, application id is {application_id}")
@@ -406,7 +402,7 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
 
                 if trajectory_timeout - (exec_time - run_start_time) < 0:
                     trajectory.metadata["stop_reason"] = "TIMEOUT"
-                    return trajectory, inference_log_probs_list, llm_all_tokens
+                    return trajectory, inference_log_probs_list
                 
             except Exception as e:
                 logger.error(f"Error in trajectory {request_id}: {e}")
@@ -475,7 +471,7 @@ class SweToolsIcepopMessagesAgent(GeneralAgent):
                 trajectory.metadata["profiler_summary"] = {"error": str(e)}
         
         logger.info(f"[DEBUG] About to return trajectory for {trajectory.request_id}")
-        return trajectory, inference_log_probs_list, llm_all_tokens
+        return trajectory, inference_log_probs_list
     
     def _parse_react_response(self, output: str) -> List[TrajectoryStep]:
         """
