@@ -17,6 +17,7 @@ import re
 import time
 import shlex
 import asyncio
+import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 from datetime import datetime
 
@@ -262,16 +263,28 @@ class SweAgent(GeneralAgent):
                     kwargs["temperature"] =self.temperature
                 kwargs["max_tokens"] = remaining_max_tokens
 
-                response = await llm_generate_func(
+                result = await llm_generate_func(
                     messages=messages,
                     application_id=application_id,
                     idx=idx,
                     **kwargs
                 )
+                
+                # Handle result - for verl it's (response, inf_log_probs), for openai it's just response
+                step_inf_log_probs = None
+                llm_tokens = []
+                if isinstance(result, tuple):
+                    if len(result) > 2:
+                        print("[SweAgentToolIcepop] get result more than 2")
+                        response, step_inf_log_probs, llm_tokens = result[0], result[1], result[2]
+                    else:
+                        response = result[0]
+                else:
+                    response = result
+                    
                 # Record timing
                 generation_time = time.time() - start_time
                 print(f"LLM call round {round_count + 1} execution time: {generation_time:.3f} seconds, pod name: {request_id}, idx is {idx}, application id is {application_id}")
-                
                 
                 trajectory.metadata["assistant_timings"].append({
                     "round": round_count + 1,
@@ -341,6 +354,7 @@ class SweAgent(GeneralAgent):
                     return trajectory
                 
             except Exception as e:
+                traceback.print_exc()
                 logger.error(f"Error in trajectory {request_id}: {e}")
                 trajectory.metadata["error_count"] += 1
                 error_step = TrajectoryStep(
