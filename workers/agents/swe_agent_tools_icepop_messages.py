@@ -17,7 +17,6 @@ import re
 import time
 import shlex
 import asyncio
-import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 from datetime import datetime
 
@@ -39,8 +38,8 @@ except ImportError:
     logger.warning("json-repair not available. Install with: pip install json-repair")
 
 
-@register_agent("swe")
-class SweAgent(GeneralAgent):
+@register_agent("swe_tool_icepop_messages")
+class SweToolsIcepopMessagesAgent(GeneralAgent):
     """
     General purpose ReAct agent with configurable tools and behavior.
     
@@ -84,12 +83,14 @@ class SweAgent(GeneralAgent):
         self.termination_tool_names = termination_tool_names or ["finish"]
         self.debug = debug
         self.working_dir = working_dir or "/testbed"
+        print(f"[SweAgent] current working_dir is {working_dir}")
         self.kubeconfig_path = kubeconfig_path
         self.namespace = namespace
         self.timeout = timeout
         self.k8s_manager = None
 
         self.trajectory = None
+        self.inference_log_probs_list = []
         
         logger.info(f"Initialized GeneralAgent with working_dir={working_dir}, kubeconfig_path={kubeconfig_path}, max_rounds={self.max_rounds}")
     
@@ -126,10 +127,40 @@ class SweAgent(GeneralAgent):
                 
         
         return messages_copy
+    
+    def format_messages_for_llm(self, trajectory: Trajectory, additional_message: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Format trajectory into messages for LLM input.
+        
+        Args:
+            trajectory: Current trajectory
+            additional_message: Additional message to append
+            
+        Returns:
+            List of messages in chat format
+        """
+        messages = []
+        
+        # Add system prompt
+        system_prompt = self.create_system_prompt()
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+            # Store system prompt in trajectory metadata for later use
+            if not hasattr(trajectory, 'system_prompt'):
+                trajectory.system_prompt = system_prompt
+        
+        # Add trajectory steps as messages
+        messages.extend(trajectory.get_messages())
+        
+        # Add additional message if provided
+        if additional_message:
+            messages.append({"role": "user", "content": additional_message})
+        
+        return messages
 
     async def run_trajectory(
         self,
-        prompt: Union[str, Dict[str, Any]],
+        prompt: Any,
         llm_generate_func,
         request_id: str,
         max_tokens: Optional[int] = None,
@@ -202,7 +233,6 @@ class SweAgent(GeneralAgent):
             "current_tokens": 0,
             "token_counts": []  # List of token counts after each interaction
         }
-        
         if isinstance(prompt, str):
             # Add initial observation
             initial_content = prompt
@@ -240,6 +270,7 @@ class SweAgent(GeneralAgent):
         
         consecutive_thoughts = 0
         round_count = 0
+        inference_log_probs_list = []
 
         run_start_time = time.time()
         exist_tokens = 0
@@ -250,6 +281,7 @@ class SweAgent(GeneralAgent):
         while self.should_continue(trajectory) and round_count < self.max_rounds:
             try:
                 self.trajectory = trajectory
+                self.inference_log_probs_list = inference_log_probs_list
                 
                 # Generate next step
                 messages = self.format_messages_for_llm(trajectory)
@@ -259,14 +291,10 @@ class SweAgent(GeneralAgent):
                     messages = self._add_steps_remaining(messages, round_count)
 
                 
-                if max_tokens and tokenizer_func and convert_messages_to_tokens_and_masks:
-                    current_add_messages = messages[start_message_nums:]
-                    for message in current_add_messages:
-                        if message.get("role") == "user":
-                            exist_tokens += len(convert_messages_to_tokens_and_masks([message], tokenizer=tokenizer_func, parser=chat_parser, contains_first_msg=False, contains_generation_msg=True)[0])
-                        else:
-                            exist_tokens += len(convert_messages_to_tokens_and_masks([message], tokenizer=tokenizer_func, parser=chat_parser, contains_first_msg=False, contains_generation_msg=False)[0])
-                    start_message_nums = len(messages)
+                if max_tokens and tokenizer_func:
+                    exist_tokens = len(tokenizer_func.encode(chat_parser.parse(messages, is_first_msg=True, 
+                                                                           add_generation_prompt=True), 
+                                                         add_special_tokens=False))
                     remaining_max_tokens = max_tokens - exist_tokens
                 else:
                     remaining_max_tokens = self.max_tokens_per_step
@@ -303,16 +331,18 @@ class SweAgent(GeneralAgent):
                 else:
                     response = result
                     
+                inference_log_probs_list.append(step_inf_log_probs)
                 # Record timing
                 generation_time = time.time() - start_time
                 print(f"LLM call round {round_count + 1} execution time: {generation_time:.3f} seconds, pod name: {request_id}, idx is {idx}, application id is {application_id}")
+                
                 
                 trajectory.metadata["assistant_timings"].append({
                     "round": round_count + 1,
                     "generation_time_seconds": round(generation_time, 3),
                     "timestamp": datetime.now().isoformat()
                 })
-                
+
                 # Parse the response (may contain multiple steps)
                 parsed_steps = self._parse_react_response(response)
                 
@@ -372,10 +402,9 @@ class SweAgent(GeneralAgent):
 
                 if trajectory_timeout - (exec_time - run_start_time) < 0:
                     trajectory.metadata["stop_reason"] = "TIMEOUT"
-                    return trajectory
+                    return trajectory, inference_log_probs_list
                 
             except Exception as e:
-                traceback.print_exc()
                 logger.error(f"Error in trajectory {request_id}: {e}")
                 trajectory.metadata["error_count"] += 1
                 error_step = TrajectoryStep(
@@ -442,7 +471,7 @@ class SweAgent(GeneralAgent):
                 trajectory.metadata["profiler_summary"] = {"error": str(e)}
         
         logger.info(f"[DEBUG] About to return trajectory for {trajectory.request_id}")
-        return trajectory
+        return trajectory, inference_log_probs_list
     
     def _parse_react_response(self, output: str) -> List[TrajectoryStep]:
         """
@@ -483,6 +512,7 @@ class SweAgent(GeneralAgent):
             )]
         except Exception as e:
             raise Exception(f"[AgentLogs] Error when parser output as action! Current output is: {output}")
+
 
     def _handle_action(self, action_step: TrajectoryStep, trajectory: Trajectory) -> Optional[TrajectoryStep]:
         """Handle action step execution using the existing tool system."""
