@@ -1,13 +1,11 @@
-# Byte-compiled / optimized / DLL files
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
+.Python
 
 # Distribution / packaging
-.Python
 build/
 develop-eggs/
 dist/
@@ -20,190 +18,93 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
+# Virtual environments
 venv/
 ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Icon must end with two \r
-Icon
-
-# Thumbnails
-._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
-
-# Windows
-# Windows thumbnail cache files
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-
-# Dump file
-*.stackdump
-
-# Folder config file
-[Dd]esktop.ini
-
-# Recycle Bin used on file shares
-$RECYCLE.BIN/
-
-# Windows Installer files
-*.cab
-*.msi
-*.msix
-*.msm
-*.msp
-
-# Windows shortcuts
-*.lnk
-
-# Project specific
-logs/
-trajectories/
-datasets/
-simple_trajectories/
-*.log
-*.json.bak
-*~
+env/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Local environment files
-.env.*
+# Project specific
+test_instances.jsonl
+clean_pycache.sh
+CLAUDE.md
+agentic_rollout_library_professional.svg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
 !.env.example
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# Sensitive example/test files (containing credentials, internal URLs, etc.)
+llm-workspace/
+ds_k8s_example.py
+ds_k8s_issue_maker.py
+miaoda_k8s_example.py
+miaoda_k8s_example_complex.py
+miaoda_k8s_example_elastic.py
+miaoda_trajectory_k8s_replay.py
+r2e_configs.py
+r2e_k8s_example.py
+r2e_k8s_example_elastic.py
+r2e_k8s_example_refine.py
+r2e_k8s_issue_maker.py
+bedrock_claude_usage_example.py
+deepseek_completion_call.py
+test_miaoda_reward_calculation.py
+test_local_execution.py
+trajectory_replay.py
+verify_fix.py
 
-# Claude settings
-.claude/
+# Data and output directories
+miaoda-dataset/
+miaoda-output/
+output_issue_maker/
+swe-bench-verified-workspace/
+swebench-report/
+sb-cli-reports/
+
+# Batch processing scripts (root level only)
+/batch_*.py
+/calculate_*.py
+/filter_*.py
+/generate_*.py
+/validate_*.py
+/verify_*.py
+/get_*.py
+
+# Test and debug files (root level only, exclude src/tests/)
+/test_*.py
+/debug*.py
+/*.jsonl
+/*.xlsx
+
+# Shell scripts and config files in root
+*.sh
+*.backup
+miaoda_configs.py
+call_claude.py
+check_issue_pass.py
+miaoda_env_prepare.py
+swebench_*.py
+wait_for_model_ready.py

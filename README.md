@@ -1,243 +1,420 @@
 # Agentic Rollout Library
 
-> [English Version](README_EN.md) | 中文版
+A powerful and modular Python library for building agentic systems with advanced tool execution, LLM integration, and Kubernetes support.
 
-一个高度可定制的智能体推理框架，支持工具集成、自定义系统提示和灵活的动作解析。该库提供了构建生产级AI智能体所需的所有核心组件。
+## Features
 
-## 🌟 核心特性
+### Core Architecture
 
-### 🎯 高度可定制化
-- **工具定制**：每个工具都可以自定义描述，支持不同的提示格式
-- **系统提示定制**：完全控制系统提示的生成，支持动态变量注入
-- **动作解析定制**：支持自定义动作解析器（JSON、XML等格式）
-- **智能体行为定制**：可配置的终止条件、最大轮数、调试模式等
+- **Modular Node System**: Built on an extensible BaseNode architecture with specialized nodes for different tasks
+- **Timeline Tracking**: Built-in performance profiling and execution tracking for debugging and optimization
+- **Async Support**: Full asynchronous support with retry mechanisms and timeout controls
+- **Flexible Tool Framework**: Extensible tool system supporting multiple execution modes (local, K8S)
 
-### 🤖 通用智能体框架 (GeneralAgent)
-- **ReAct框架**：内置思考-行动-观察循环
-- **灵活的工具系统**：动态注册和管理工具
-- **轨迹管理**：完整的执行轨迹跟踪和保存
-- **终止工具支持**：可配置哪些工具触发智能体终止
-- **调试模式**：详细的LLM输入/输出日志
+### Key Components
 
-### 🛠️ 强大的工具系统
-- **统一工具接口**：所有工具继承自 `AgenticBaseTool`
-- **OpenAI Schema支持**：自动生成OpenAI函数调用格式
-- **执行模式**：支持本地执行和K8s Pod执行
-- **R2E工具集**：专为代码仓库编辑设计的工具集
-  - `R2EBashExecutor`：安全的bash命令执行
-  - `R2EFileEditor`：高级文件编辑（view/create/str_replace/insert/undo）
-  - `R2ESearch`：代码搜索工具
-  - `R2ESubmit`：任务完成提交
+#### 1. Node System (`src/core/`)
 
-### 🏗️ 提示构建系统 (PromptBuilder)
-```python
-# 使用 PromptBuilder 创建动态提示
-builder = PromptBuilder()
-prompt = (builder
-    .add_variable("task", "修复bug #123")
-    .add_tools(tools, formatter=custom_formatter)
-    .add_context({"repo": "pandas", "version": "2.0"})
-    .add_section("Instructions", "请仔细分析代码...")
-    .build())
-```
+- **BaseNode**: Abstract base class providing common functionality for all nodes
+  - Timeline tracking integration
+  - Timeout support
+  - Metadata management
+  - Async execution with `process_async()`
 
-### 🏭 工厂模式系统
-- **工具工厂**：基于名称动态创建工具实例
-- **智能体工厂**：统一的智能体创建接口
-- **自动注册**：使用装饰器自动注册新组件
+- **LLMNode**: Language model integration node
+  - Support for multiple LLM providers (OpenAI, Anthropic/Bedrock, DeepSeek, etc.)
+  - Configurable retry logic with exponential backoff
+  - Connection pooling for better performance
+  - Token usage tracking
 
-## 📁 项目结构
+- **ToolExecutionNode**: Execute tools in local or containerized environments
+  - Dynamic tool registration
+  - Subprocess-based tool execution
+  - Custom result parsers
+  - Built-in stop tool support
 
-```
-agentic-rollout-library/
-├── workers/
-│   ├── agents/
-│   │   └── general_agent.py        # 通用ReAct智能体
-│   ├── core/
-│   │   ├── base_agent.py          # 智能体基类
-│   │   ├── base_tool.py           # 工具基类
-│   │   ├── tool_factory.py        # 工具工厂
-│   │   ├── agent_factory.py       # 智能体工厂
-│   │   └── trajectory.py          # 轨迹管理
-│   ├── tools/
-│   │   ├── bash_executor_tool.py  # Bash执行工具
-│   │   ├── file_editor_tool.py    # 文件编辑工具
-│   │   ├── search_tool.py         # 搜索工具
-│   │   └── r2e_tools/            # R2E工具集
-│   └── utils/
-│       ├── llm_client.py          # LLM客户端
-│       └── prompt_builder.py      # 提示构建器
-└── tests/
-    └── test_r2e_general_agent.py  # 完整示例
-```
+- **K8SToolExecutionNode**: Kubernetes-based tool execution (extends ToolExecutionNode)
+  - Execute tools in Kubernetes pods using [Kodo](https://github.com/your-kodo-repo)
+  - Lazy pod initialization for better resource utilization
+  - Support for local and K8S execution modes
+  - Automatic file synchronization to pods
+  - Configurable resource requests (CPU, memory)
+  - Custom DNS configuration support
 
-## 🚀 快速开始
+- **ContextEngineeringNode**: Conversation context management
+  - Message history tracking
+  - Context compression strategies
+  - LLM-ready context formatting
+  - Message filtering and manipulation
 
-### 安装
+- **ToolParsingNode**: Parse tool calls from LLM responses
+  - Support for multiple formats (JSON, XML, OpenAI, Anthropic, LangChain)
+  - Custom parser support
+  - Automatic validation of tool calls
+  - Extensible parsing strategies
+
+#### 2. Tool Collections (`src/tools/`)
+
+**Base Tool Framework** (`src/tools/base_tool.py`)
+- Tool wrapper for script-based tools
+- Configurable execution modes
+- Custom result parsers
+
+**R2E Tools** (`src/tools/r2e/`)
+- File editor tool
+- Search functionality
+- Bash execution
+- Finish/completion tool
+
+**Miaoda Tools** (`src/tools/miaoda/`)
+- File editor
+- Bash executor
+- Think tool (reasoning)
+- Image search via MCP server
+- API RAG (Retrieval-Augmented Generation)
+- API description query
+- Supabase integration (init, migration, SQL execution)
+
+**DeepSeek Tools** (`src/tools/deepseek/`)
+- File editor
+- Bash executor
+
+#### 3. Utilities (`src/utils/`)
+
+- **LLM API Utils** (`llm_api_utils.py`)
+  - Generic LLM API calling functions
+  - Support for OpenAI-compatible APIs
+  - DeepSeek API integration
+  - Proxy management
+  - Streaming support
+
+- **Bedrock Claude Handler** (`bedrock_claude_handle.py`)
+  - AWS Bedrock integration for Claude models
+  - Async and sync interfaces
+  - Token usage tracking
+  - Custom endpoint support
+
+## Installation
 
 ```bash
-# 克隆仓库
+# Clone the repository
 git clone <repository-url>
 cd agentic-rollout-library
 
-# 安装依赖
-pip install -e .
+# Install dependencies
+pip install -r requirements.txt
+
+# For Kubernetes support, install Kodo
+pip install kodo
 ```
 
-### 环境配置
+## Quick Start
 
-创建 `.env` 文件或设置环境变量：
+### Example 1: Basic LLM Node Usage
+
+```python
+from src.core.llm_node import LLMNode
+from src.utils.llm_api_utils import call_llm_api
+
+# Create LLM node with custom function
+llm_node = LLMNode(
+    name="MyLLMNode",
+    model_config={
+        "model": "gpt-4",
+        "api_key": "your-api-key",
+        "base_url": "https://api.openai.com/v1"
+    },
+    timeline_enabled=True
+)
+
+# Set up the LLM function handle
+def my_llm_function(messages):
+    return call_llm_api(
+        messages=messages,
+        model=llm_node.model_config["model"],
+        api_key=llm_node.model_config["api_key"],
+        base_url=llm_node.model_config["base_url"]
+    )
+
+llm_node.set_function_handle(my_llm_function)
+
+# Process messages
+messages = [{"role": "user", "content": "Hello!"}]
+response = llm_node.process(messages)
+print(response)
+```
+
+### Example 2: Tool Execution with K8S
+
+```python
+import asyncio
+from src.core import K8SToolExecutionNode
+
+async def main():
+    # Create K8S executor
+    executor = K8SToolExecutionNode(
+        name="K8SExecutor",
+        namespace="default",
+        kubeconfig_path="~/.kube/config",
+        image="python:3.9",
+        pod_name="my-tool-pod",
+        timeline_enabled=True
+    )
+
+    # Register tools
+    executor.register_tool(
+        "search",
+        "src/tools/r2e/search_func.py",
+        execution_mode="k8s"
+    )
+
+    # Use async context manager for automatic cleanup
+    async with executor:
+        # Execute tool
+        tool_calls = [{
+            "tool": "search",
+            "parameters": {"query": "example"}
+        }]
+
+        results = await executor.process_async(tool_calls)
+        print(results)
+
+asyncio.run(main())
+```
+
+### Example 3: Context Management
+
+```python
+from src.core.context_engineering_node import ContextEngineeringNode
+
+# Create context manager
+context = ContextEngineeringNode(
+    name="MyContext",
+    max_context_length=10
+)
+
+# Add messages
+context.add_message(
+    "You are a helpful assistant",
+    message_role="system",
+    message_type="system_prompt"
+)
+
+context.add_message(
+    "What is AI?",
+    message_role="user",
+    message_type="query"
+)
+
+# Get LLM-ready context
+llm_context = context.get_llm_context()
+print(llm_context)
+
+# Compress context if needed
+context.compress_context(keep_first=1, keep_last=5)
+```
+
+### Example 4: Tool Parsing
+
+```python
+from src.core.tool_parsing_node import ToolParsingNode
+
+# Create parser
+parser = ToolParsingNode(name="ToolParser")
+
+# Parse LLM response
+llm_response = {
+    "content": '''
+    ```json
+    {
+        "tool": "search",
+        "parameters": {"query": "example"}
+    }
+    ```
+    '''
+}
+
+parsed_tools = parser.process(llm_response)
+print(parsed_tools)
+```
+
+### Example 5: Timeline Tracking
+
+```python
+from src.core.timeline import get_timeline
+from src.core.llm_node import LLMNode
+
+# Get global timeline instance
+timeline = get_timeline()
+
+# Create nodes with timeline enabled
+llm_node = LLMNode(name="LLM", timeline_enabled=True)
+
+# Execute some operations
+# ...
+
+# View performance summary
+timeline.print_summary(detailed=True)
+
+# Export to JSON
+timeline.export_json("timeline_report.json")
+
+# Clear for next run
+timeline.clear()
+```
+
+## Project Structure
+
+```
+agentic-rollout-library/
+├── src/
+│   ├── core/                    # Core node implementations
+│   │   ├── base_node.py         # Abstract base class
+│   │   ├── llm_node.py          # LLM integration
+│   │   ├── tool_execution_node.py      # Tool execution
+│   │   ├── k8s_tool_execution_node.py  # K8S tool execution
+│   │   ├── context_engineering_node.py # Context management
+│   │   ├── tool_parsing_node.py        # Tool call parsing
+│   │   └── timeline.py          # Performance tracking
+│   ├── tools/                   # Tool implementations
+│   │   ├── base_tool.py         # Tool wrapper base
+│   │   ├── r2e/                 # R2E tool collection
+│   │   ├── miaoda/              # Miaoda tool collection
+│   │   └── deepseek/            # DeepSeek tool collection
+│   ├── utils/                   # Utility modules
+│   │   ├── llm_api_utils.py     # LLM API helpers
+│   │   └── bedrock_claude_handle.py  # AWS Bedrock integration
+│   └── tests/                   # Unit tests
+└── README.md
+```
+
+## Testing
+
+The library includes comprehensive test coverage:
 
 ```bash
-export LLM_API_KEY="your-api-key"
-export LLM_BASE_URL="your-base-url"
-export LLM_MODEL_NAME="gpt-4"
+# Run all tests
+python -m pytest src/tests/
+
+# Run specific test file
+python -m pytest src/tests/test_llm_node.py
+
+# Run with coverage
+python -m pytest --cov=src src/tests/
 ```
 
-### 基础使用示例
+### Tool-specific Tests
+
+Each tool collection has its own test suite:
+
+```bash
+# R2E tools
+python src/tools/tests/r2e/run_all_tests.py
+
+# Miaoda tools (requires K8S setup)
+python src/tools/tests/miaoda/run_all_tests.py
+```
+
+## Advanced Features
+
+### 1. Retry Configuration
 
 ```python
-from workers.agents.general_agent import GeneralAgent
-from workers.core import create_tool
-from workers.utils import create_llm_client
-
-# 1. 创建工具
-tools = {
-    "bash": create_tool("BashExecutor"),
-    "editor": create_tool("FileEditor"),
-    "search": create_tool("Search"),
-    "finish": create_tool("Finish")
-}
-
-# 2. 创建智能体
-agent = GeneralAgent(
-    max_rounds=10,
-    termination_tool_names=["finish"]
-)
-agent.set_tools(tools)
-
-# 3. 创建LLM客户端
-llm_client = create_llm_client(
-    api_key="your-key",
-    base_url="your-url",
-    model="gpt-4"
-)
-
-# 4. 运行任务
-result = await agent.run_trajectory(
-    prompt="在当前目录创建一个 hello.py 文件",
-    llm_generate_func=llm_client.generate,
-    request_id="task-001"
+llm_node = LLMNode(name="LLM")
+llm_node.set_retry_config(
+    max_retries=5,
+    initial_delay=2,
+    max_delay=120,
+    exponential_base=2
 )
 ```
 
-### 高级定制示例
-
-#### 1. 自定义工具描述
+### 2. Custom Tool Parsers
 
 ```python
-class CustomDescriptionWrapper:
-    def __init__(self, tool, description):
-        self.tool = tool
-        self.custom_description = description
-    
-    def get_description(self):
-        return self.custom_description
-    
-    def __getattr__(self, name):
-        return getattr(self.tool, name)
+from src.core.tool_parsing_node import create_structured_parser
 
-# 包装工具with自定义描述
-wrapped_tool = CustomDescriptionWrapper(
-    original_tool,
-    "我的自定义工具描述..."
+# Create OpenAI-specific parser
+parser = ToolParsingNode(
+    parse_function=create_structured_parser("openai")
 )
 ```
 
-#### 2. 动态系统提示
+### 3. K8S Pod Configuration
 
 ```python
-def generate_custom_prompt(tools, **kwargs):
-    task = kwargs.get('task_description', 'default task')
-    return f"""
-    你是一个专业的{kwargs.get('role', '助手')}。
-    
-    任务：{task}
-    
-    可用工具：
-    {tools['editor'].get_description()}
-    {tools['bash'].get_description()}
-    
-    {kwargs.get('additional_instructions', '')}
-    """
-
-# 使用动态提示
-agent.system_prompt = generate_custom_prompt(
-    tools,
-    role="Python开发者",
-    task_description="修复代码中的bug",
-    additional_instructions="请遵循PEP8规范"
+executor = K8SToolExecutionNode(
+    namespace="ml-workflows",
+    image="your-registry/custom-image:latest",
+    node_selector={"gpu": "true"},
+    cpu_request="2",
+    memory_request="4Gi",
+    dns_policy="None",
+    dns_config={
+        "nameservers": ["8.8.8.8", "8.8.4.4"],
+        "searches": ["default.svc.cluster.local"]
+    }
 )
 ```
 
-#### 3. 自定义动作解析器
+### 4. Async Operations
+
+All nodes support async execution:
 
 ```python
-def parse_xml_action(output: str):
-    """解析XML格式的动作"""
-    import re
-    match = re.search(r'<function=(\w+)>(.*?)</function>', output, re.DOTALL)
-    if match:
-        tool_name = match.group(1)
-        # 解析参数...
-        return {"tool_name": tool_name, "tool_args": {...}}
-    return None
+async def process_with_nodes():
+    llm_response = await llm_node.process_with_timing(
+        messages,
+        event_type="llm_call"
+    )
 
-# 使用自定义解析器
-agent = GeneralAgent(
-    action_parser=parse_xml_action
-)
+    parsed_tools = await parser.process_async(llm_response)
+    results = await executor.process_async(parsed_tools)
+
+    return results
 ```
 
-## 🔧 K8s 执行模式
+## Configuration
 
-支持在Kubernetes Pod中执行工具：
+### Environment Variables
 
-```python
-k8s_config = {
-    "execution_mode": "k8s",
-    "pod_name": "my-dev-pod",
-    "namespace": "default"
-}
+The library supports the following environment variables:
 
-# 创建K8s执行的工具
-bash_tool = create_tool("BashExecutor", k8s_config)
-file_tool = create_tool("FileEditor", k8s_config)
+```bash
+# LLM API Configuration
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+
+# AWS Bedrock Configuration
+export BEDROCK_AK="your-access-key"
+export BEDROCK_SK="your-secret-key"
+export BEDROCK_REGION="us-west-2"
+
+# Proxy Configuration (if needed)
+export HTTP_PROXY="http://proxy-server:port"
+export HTTPS_PROXY="http://proxy-server:port"
 ```
 
-## 📚 核心概念
+## Contributing
 
-### 工具 (Tools)
-- 继承自 `AgenticBaseTool`
-- 实现 `execute_tool` 方法
-- 提供 `get_openai_tool_schema` 返回工具描述
-- 支持 `get_description` 自定义描述
+Contributions are welcome! Please follow these guidelines:
 
-### 智能体 (Agents)
-- 继承自 `BaseAgent`
-- 管理工具集合
-- 处理LLM交互
-- 维护执行轨迹
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
 
-### 轨迹 (Trajectory)
-- 记录所有思考、动作和观察
-- 支持序列化和反序列化
-- 用于调试和分析
+## License
 
-## 🤝 贡献
+[Add your license information here]
 
-欢迎贡献代码！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
+## Acknowledgments
 
-## 📄 许可证
+This library uses the following open-source projects:
+- [Kodo](https://github.com/your-kodo-repo) for Kubernetes operations
+- Various LLM providers (OpenAI, Anthropic, DeepSeek, etc.)
 
-本项目采用 Apache 2.0 许可证 - 详见 [LICENSE](LICENSE) 文件。
+## Support
+
+For issues, questions, or contributions, please open an issue on GitHub.
