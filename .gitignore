@@ -84,6 +84,11 @@ swe-bench-verified-workspace/
 swebench-report/
 sb-cli-reports/
 
+# Not needed directories
+workers/
+config/
+tests/
+
 # Batch processing scripts (root level only)
 /batch_*.py
 /calculate_*.py
